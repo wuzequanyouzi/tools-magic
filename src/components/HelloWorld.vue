@@ -1,58 +1,82 @@
 <template>
-  <div class="hello">
-    <h1>{{ msg }}</h1>
-    <p>
-      For a guide and recipes on how to configure / customize this project,<br>
-      check out the
-      <a href="https://cli.vuejs.org" target="_blank" rel="noopener">vue-cli documentation</a>.
-    </p>
-    <h3>Installed CLI Plugins</h3>
-    <ul>
-      <li><a href="https://github.com/vuejs/vue-cli/tree/dev/packages/%40vue/cli-plugin-babel" target="_blank" rel="noopener">babel</a></li>
-      <li><a href="https://github.com/vuejs/vue-cli/tree/dev/packages/%40vue/cli-plugin-eslint" target="_blank" rel="noopener">eslint</a></li>
-    </ul>
-    <h3>Essential Links</h3>
-    <ul>
-      <li><a href="https://vuejs.org" target="_blank" rel="noopener">Core Docs</a></li>
-      <li><a href="https://forum.vuejs.org" target="_blank" rel="noopener">Forum</a></li>
-      <li><a href="https://chat.vuejs.org" target="_blank" rel="noopener">Community Chat</a></li>
-      <li><a href="https://twitter.com/vuejs" target="_blank" rel="noopener">Twitter</a></li>
-      <li><a href="https://news.vuejs.org" target="_blank" rel="noopener">News</a></li>
-    </ul>
-    <h3>Ecosystem</h3>
-    <ul>
-      <li><a href="https://router.vuejs.org" target="_blank" rel="noopener">vue-router</a></li>
-      <li><a href="https://vuex.vuejs.org" target="_blank" rel="noopener">vuex</a></li>
-      <li><a href="https://github.com/vuejs/vue-devtools#vue-devtools" target="_blank" rel="noopener">vue-devtools</a></li>
-      <li><a href="https://vue-loader.vuejs.org" target="_blank" rel="noopener">vue-loader</a></li>
-      <li><a href="https://github.com/vuejs/awesome-vue" target="_blank" rel="noopener">awesome-vue</a></li>
-    </ul>
-  </div>
+  <div id="container"></div>
 </template>
 
 <script>
+import Vue from 'vue';
 export default {
   name: 'HelloWorld',
   props: {
-    msg: String
-  }
-}
+    url: String,
+  },
+  data() {
+    return {};
+  },
+  mounted() {
+    this.importScript();
+  },
+  methods: {
+    async importScript() {
+      // 发起 get 请求
+      const resCode = await fetch(this.url).then((res) => res.text());
+      this.sandboxEval(resCode);
+    },
+    sandboxEval(code) {
+      const fakeWindow = {};
+      const proxyWindow = new Proxy(window, {
+        // 获取属性
+        get(target, key) {
+          // https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/Symbol/unscopables
+          if (key === Symbol.unscopables) return false;
+
+          // 内部可能访问当这几个变量，都直接返回代理对象
+          if (['window', 'globalThis'].includes(key)) {
+            return proxyWindow;
+          } else if (['self'].includes(key)) {
+            return window;
+          }
+
+          return target[key] || fakeWindow[key];
+        },
+        // 设置属性
+        set(target, key, value) {
+          return (fakeWindow[key] = value);
+        },
+        // 判断属性是否有
+        has(target, key) {
+          return key in target || key in fakeWindow;
+        },
+      });
+      const tempPproxyWindow = window.proxyWindow;
+      window.proxyWindow = proxyWindow;
+
+      // 这是一个自执行函数
+      // 并且通过 `call` 调用，因为 code 可能通过 this 访问 window，所以通过 call 改变 this 指向
+      const codeBindScope = `
+        (function (window) {
+          with (window) {
+            ${code}
+          }
+        }).call(window.proxyWindow, window.proxyWindow)
+      `;
+
+      // 通过 new Function 的方式执行
+      const fn = new Function(codeBindScope);
+      fn();
+
+      // const Com = Vue.extend(window.proxyWindow['test-umd'].default);
+      new Vue({
+        render: (h) =>
+          h(window.proxyWindow['test-umd'].default, {
+            props: this.$attrs,
+            on: this.$listeners,
+          }),
+      }).$mount('#container');
+
+      tempPproxyWindow && (window.proxyWindow = tempPproxyWindow);
+    },
+  },
+};
 </script>
 
-<!-- Add "scoped" attribute to limit CSS to this component only -->
-<style scoped lang="scss">
-h3 {
-  margin: 40px 0 0;
-}
-ul {
-  list-style-type: none;
-  padding: 0;
-}
-li {
-  display: inline-block;
-  margin: 0 10px;
-}
-a {
-  color: #42b983;
-}
-</style>
+<style scoped lang="scss"></style>
